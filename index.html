@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>◯✗ 画像エディター</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            overscroll-behavior: none; 
+        }
+        #canvas-container {
+            background-image: linear-gradient(45deg, #e5e7eb 25%, transparent 25%), 
+                              linear-gradient(-45deg, #e5e7eb 25%, transparent 25%), 
+                              linear-gradient(45deg, transparent 75%, #e5e7eb 75%), 
+                              linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+            background-color: #f3f4f6;
+        }
+        canvas {
+            max-width: 100%;
+            max-height: calc(100vh - 120px);
+            object-fit: contain;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        
+        #drop-overlay { display: none; }
+        #drop-overlay.active { display: flex; }
+
+        input[type=range] { accent-color: #3b82f6; }
+
+        #text-input-container {
+            position: absolute;
+            display: none;
+            z-index: 20;
+            transform: translate(-50%, -50%);
+        }
+        #text-input {
+            background: rgba(255, 255, 255, 0.9);
+            border: 2px solid #3b82f6;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            outline: none;
+            min-width: 150px;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 h-screen flex flex-col font-sans text-gray-800 overflow-hidden">
+
+    <header class="bg-white border-b border-gray-200 shadow-sm z-10 flex-shrink-0">
+        <div class="px-4 h-14 flex items-center justify-between">
+            <h1 class="font-bold text-lg text-gray-800 flex items-center gap-2 w-48">
+                <i class="fa-solid fa-pen-to-square text-blue-500"></i>
+                <span class="hidden sm:inline">画像エディター</span>
+            </h1>
+            
+            <div class="flex items-center space-x-4 flex-1 justify-center">
+                <div class="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+                    <span class="text-xs font-medium text-gray-500 w-8">色</span>
+                    <input type="color" id="color-picker" class="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent" title="現在のツールの色">
+                    
+                    <div class="w-px h-4 bg-gray-300 mx-1"></div>
+                    
+                    <span class="text-xs font-medium text-gray-500 w-12 text-right">太さ</span>
+                    <input type="range" id="line-width" min="1" max="30" value="5" class="w-20 sm:w-24" title="線の太さ">
+                    
+                    <div class="w-px h-4 bg-gray-300 mx-1"></div>
+                    
+                    <span class="text-xs font-medium text-gray-500 w-24 text-right">ｽﾀﾝﾌﾟ/文字ｻｲｽﾞ</span>
+                    <input type="range" id="stamp-size" min="10" max="200" value="50" class="w-20 sm:w-24" title="クリック配置時のサイズ">
+
+                    <div class="w-px h-4 bg-gray-300 mx-1"></div>
+                    
+                    <button id="btn-aspect" class="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border transition-colors border-gray-300 text-gray-600 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300" onclick="toggleAspectRatio()" title="縦横比を1:1に固定 (Shiftキーでも可)">
+                        <i class="fa-solid fa-link"></i> 1:1固定
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-1 w-48 justify-end">
+                <button id="btn-undo" class="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded disabled:opacity-30 disabled:cursor-not-allowed" title="元に戻す (Ctrl+Z)" onclick="undo()" disabled>
+                    <i class="fa-solid fa-rotate-left"></i>
+                </button>
+                <button id="btn-redo" class="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded disabled:opacity-30 disabled:cursor-not-allowed" title="やり直す (Ctrl+Y)" onclick="redo()" disabled>
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+                <div class="w-px h-4 bg-gray-300 mx-1"></div>
+                <button class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition-colors shadow-sm flex items-center gap-2" onclick="downloadImage()">
+                    <i class="fa-solid fa-download"></i>
+                    <span class="hidden md:inline">保存</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden relative">
+        <aside class="w-14 bg-white border-r border-gray-200 z-10 flex flex-col items-center py-4 space-y-2 flex-shrink-0">
+            <button onclick="triggerFileSelect()" class="w-10 h-10 rounded-lg flex items-center justify-center text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors mb-2" title="画像を開く">
+                <i class="fa-regular fa-folder-open text-lg"></i>
+            </button>
+            <input type="file" id="file-input" class="hidden" accept="image/*">
+            
+            <div class="w-8 h-px bg-gray-200 my-2"></div>
+
+            <button class="tool-btn w-10 h-10 rounded-lg flex items-center justify-center transition-colors mb-1" data-tool="select" title="選択・移動 (V)" onclick="setTool('select')">
+                <i class="fa-solid fa-arrow-pointer text-xl"></i>
+            </button>
+            <button class="tool-btn w-10 h-10 rounded-lg flex items-center justify-center transition-colors mb-1" data-tool="circle" title="マル (O)" onclick="setTool('circle')">
+                <i class="fa-regular fa-circle text-xl"></i>
+            </button>
+            <button class="tool-btn w-10 h-10 rounded-lg flex items-center justify-center transition-colors mb-1" data-tool="cross" title="バツ (X)" onclick="setTool('cross')">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+            <button class="tool-btn w-10 h-10 rounded-lg flex items-center justify-center transition-colors mb-1" data-tool="square" title="四角形 (S)" onclick="setTool('square')">
+                <i class="fa-regular fa-square text-xl"></i>
+            </button>
+            <button class="tool-btn w-10 h-10 rounded-lg flex items-center justify-center transition-colors mb-1" data-tool="arrow" title="矢印 (A)" onclick="setTool('arrow')">
+                <i class="fa-solid fa-arrow-right-long text-xl"></i>
+            </button>
+            <button class="tool-btn w-10 h-10 rounded-lg flex items-center justify-center transition-colors mb-1" data-tool="text" title="テキスト (T)" onclick="setTool('text')">
+                <i class="fa-solid fa-font text-xl"></i>
+            </button>
+            <button class="tool-btn w-10 h-10 rounded-lg flex items-center justify-center transition-colors mb-1" data-tool="mosaic" title="モザイク (M)" onclick="setTool('mosaic')">
+                <i class="fa-solid fa-table-cells text-xl"></i>
+            </button>
+
+            <div class="flex-1"></div>
+
+            <button class="w-10 h-10 rounded-lg flex items-center justify-center text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors mt-auto" title="すべて消去" onclick="clearShapes()">
+                <i class="fa-solid fa-trash-can"></i>
+            </button>
+        </aside>
+
+        <main class="flex-1 relative flex flex-col bg-gray-100" id="main-area">
+            <div id="welcome-screen" class="absolute inset-0 flex flex-col items-center justify-center z-10 transition-opacity duration-300 pointer-events-none">
+                <div class="text-center p-8 border-2 border-dashed border-gray-400 rounded-2xl bg-white/80 backdrop-blur max-w-md w-full mx-4 shadow-sm pointer-events-auto">
+                    <i class="fa-regular fa-images text-5xl text-gray-400 mb-4"></i>
+                    <h2 class="text-xl font-bold text-gray-700 mb-2">画像を開いて開始</h2>
+                    <p class="text-gray-500 mb-6 text-sm">
+                        ドラッグ＆ドロップ、または<br>クリップボードからペースト (Ctrl+V)
+                    </p>
+                    <button onclick="triggerFileSelect()" class="px-6 py-2 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 rounded-lg font-medium transition-colors shadow-sm">
+                        ファイルを選択
+                    </button>
+                </div>
+            </div>
+
+            <div id="canvas-container" class="w-full h-full flex items-center justify-center p-4 overflow-auto relative">
+                <canvas id="editor-canvas" class="hidden"></canvas>
+                <div id="text-input-container">
+                    <input type="text" id="text-input" placeholder="テキストを入力..." autocomplete="off">
+                </div>
+            </div>
+
+            <div id="drop-overlay" class="absolute inset-0 bg-blue-500/80 z-50 flex-col items-center justify-center text-white pointer-events-none hidden">
+                <i class="fa-solid fa-cloud-arrow-down text-7xl mb-4 animate-bounce"></i>
+                <h2 class="text-3xl font-bold">画像をドロップ</h2>
+            </div>
+        </main>
+    </div>
+
+    <footer class="bg-white border-t border-gray-200 px-4 py-1.5 flex items-center justify-between text-xs text-gray-500 z-10">
+        <div class="flex items-center gap-4">
+            <span id="status-tool" class="font-medium text-blue-600"><i class="fa-regular fa-circle mr-1"></i>マルツール</span>
+            <div class="w-px h-3 bg-gray-300"></div>
+            <span id="status-dynamic" class="w-48">座標: -</span>
+            <div class="w-px h-3 bg-gray-300"></div>
+            <span id="status-size">画像: 未設定</span>
+        </div>
+        <span id="status-msg" class="font-medium">準備完了</span>
+    </footer>
+
+    <div id="confirm-modal" class="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center hidden opacity-0 transition-opacity">
+        <div class="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 transform scale-95 transition-transform" id="confirm-modal-content">
+            <h3 class="text-lg font-bold text-gray-900 mb-2 flex items-center gap-2">
+                <i class="fa-solid fa-circle-exclamation text-yellow-500"></i> 確認
+            </h3>
+            <p class="text-gray-600 mb-6 text-sm">現在の画像と編集内容は破棄されます。<br>新しい画像を読み込んでもよろしいですか？</p>
+            <div class="flex justify-end gap-3">
+                <button onclick="closeConfirmModal()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">キャンセル</button>
+                <button onclick="proceedLoadImage()" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-sm">読み込む</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('editor-canvas');
+        const ctx = canvas.getContext('2d');
+        const fileInput = document.getElementById('file-input');
+        const welcomeScreen = document.getElementById('welcome-screen');
+        const dropOverlay = document.getElementById('drop-overlay');
+        const btnUndo = document.getElementById('btn-undo');
+        const btnRedo = document.getElementById('btn-redo');
+        const btnAspect = document.getElementById('btn-aspect');
+        
+        const colorPicker = document.getElementById('color-picker');
+        const lineWidthInput = document.getElementById('line-width');
+        const stampSizeInput = document.getElementById('stamp-size');
+        const textInputContainer = document.getElementById('text-input-container');
+        const textInput = document.getElementById('text-input');
+        
+        const statusTool = document.getElementById('status-tool');
+        const statusDynamic = document.getElementById('status-dynamic');
+        const statusSize = document.getElementById('status-size');
+        const statusMsg = document.getElementById('status-msg');
+        
+        const confirmModal = document.getElementById('confirm-modal');
+        const confirmModalContent = document.getElementById('confirm-modal-content');
+
+        // State Management
+        let currentTool = 'circle';
+        let isAspectLocked = false;
+        
+        const toolColors = {
+            'select': '#000000',
+            'circle': '#ef4444',
+            'cross': '#3b82f6',
+            'square': '#22c55e',
+            'arrow': '#f59e0b',
+            'text': '#1f2937',
+            'mosaic': '#9ca3af'
+        };
+        
+        let baseImage = null;
+        let pixelatedCanvas = null; // モザイク用キャッシュ
+        
+        // 履歴管理（移動や変更を含めるため状態全体を保存）
+        let history = [];
+        let historyStep = -1;
+        let shapes = [];
+        
+        let isDrawing = false;
+        let startPos = { x: 0, y: 0 };
+        let currentShape = null;
+        let pendingFileToLoad = null;
+
+        // ドラッグ移動用
+        let draggingShape = null;
+        let lastMousePos = { x: 0, y: 0 };
+
+        function setTool(tool) {
+            currentTool = tool;
+            document.querySelectorAll('.tool-btn').forEach(btn => {
+                if (btn.dataset.tool === tool) {
+                    btn.classList.add('bg-blue-100', 'text-blue-600', 'shadow-inner');
+                    btn.classList.remove('text-gray-500', 'hover:bg-gray-100');
+                    statusTool.innerHTML = btn.innerHTML + ` ${tool.toUpperCase()} ツール`;
+                } else {
+                    btn.classList.remove('bg-blue-100', 'text-blue-600', 'shadow-inner');
+                    btn.classList.add('text-gray-500', 'hover:bg-gray-100');
+                }
+            });
+
+            if (toolColors[tool] && tool !== 'select' && tool !== 'mosaic') {
+                colorPicker.value = toolColors[tool];
+            }
+            
+            if (tool === 'select') canvas.style.cursor = 'grab';
+            else if (tool === 'text') canvas.style.cursor = 'text';
+            else canvas.style.cursor = 'crosshair';
+            
+            hideTextInput();
+        }
+
+        colorPicker.addEventListener('input', (e) => {
+            if(currentTool !== 'select' && currentTool !== 'mosaic') {
+                toolColors[currentTool] = e.target.value;
+            }
+        });
+
+        function toggleAspectRatio() {
+            isAspectLocked = !isAspectLocked;
+            if (isAspectLocked) {
+                btnAspect.classList.add('bg-blue-100', 'text-blue-600', 'border-blue-400');
+            } else {
+                btnAspect.classList.remove('bg-blue-100', 'text-blue-600', 'border-blue-400');
+            }
+        }
+
+        function showStatus(msg) {
+            statusMsg.textContent = msg;
+            setTimeout(() => { if(statusMsg.textContent === msg) statusMsg.textContent = '準備完了'; }, 3000);
+        }
+
+        function triggerFileSelect() { fileInput.click(); }
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) handleFileLoadRequest(e.target.files[0]);
+            e.target.value = '';
+        });
+        window.addEventListener('paste', (e) => {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            for (let index in items) {
+                if (items[index].kind === 'file' && items[index].type.startsWith('image/')) {
+                    handleFileLoadRequest(items[index].getAsFile());
+                    return;
+                }
+            }
+        });
+        window.addEventListener('dragover', (e) => { e.preventDefault(); dropOverlay.classList.remove('hidden'); dropOverlay.classList.add('flex'); });
+        window.addEventListener('dragleave', (e) => { e.preventDefault(); if (e.clientX === 0 || e.clientY === 0) { dropOverlay.classList.add('hidden'); dropOverlay.classList.remove('flex'); } });
+        window.addEventListener('drop', (e) => {
+            e.preventDefault(); dropOverlay.classList.add('hidden'); dropOverlay.classList.remove('flex');
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && e.dataTransfer.files[0].type.startsWith('image/')) {
+                handleFileLoadRequest(e.dataTransfer.files[0]);
+            }
+        });
+
+        function handleFileLoadRequest(file) {
+            if (baseImage && shapes.length > 0) {
+                pendingFileToLoad = file;
+                openConfirmModal();
+            } else {
+                loadImageFromFile(file);
+            }
+        }
+        function openConfirmModal() {
+            confirmModal.classList.remove('hidden');
+            setTimeout(() => { confirmModal.classList.remove('opacity-0'); confirmModalContent.classList.remove('scale-95'); }, 10);
+        }
+        function closeConfirmModal() {
+            confirmModal.classList.add('opacity-0'); confirmModalContent.classList.add('scale-95');
+            setTimeout(() => { confirmModal.classList.add('hidden'); pendingFileToLoad = null; }, 200);
+        }
+        function proceedLoadImage() { if (pendingFileToLoad) loadImageFromFile(pendingFileToLoad); closeConfirmModal(); }
+
+        function loadImageFromFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() { initCanvasWithImage(img); };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function initCanvasWithImage(img) {
+            baseImage = img;
+            canvas.width = img.width;
+            canvas.height = img.height;
+            
+            // モザイク用のピクセル化キャンバスを事前生成
+            pixelatedCanvas = document.createElement('canvas');
+            pixelatedCanvas.width = canvas.width;
+            pixelatedCanvas.height = canvas.height;
+            const pCtx = pixelatedCanvas.getContext('2d');
+            // 解像度に合わせてブロックサイズを調整 (大体25px相当)
+            const scale = Math.min(0.1, 25 / Math.max(canvas.width, canvas.height));
+            const w = canvas.width * scale;
+            const h = canvas.height * scale;
+            pCtx.drawImage(baseImage, 0, 0, w, h);
+            pCtx.imageSmoothingEnabled = false;
+            pCtx.drawImage(pixelatedCanvas, 0, 0, w, h, 0, 0, canvas.width, canvas.height);
+
+            shapes = [];
+            history = [];
+            historyStep = -1;
+            saveState(); // 初期状態を保存
+            
+            canvas.classList.remove('hidden');
+            welcomeScreen.classList.add('opacity-0');
+            setTimeout(() => welcomeScreen.classList.add('hidden'), 300);
+
+            statusSize.textContent = `画像: ${img.width} x ${img.height} px`;
+            stampSizeInput.value = Math.max(20, Math.floor(Math.min(img.width, img.height) * 0.1));
+            showStatus('画像を読み込みました');
+            render();
+        }
+
+        function getCanvasCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            return {
+                x: (clientX - rect.left) * (canvas.width / rect.width),
+                y: (clientY - rect.top) * (canvas.height / rect.height),
+                screenX: clientX,
+                screenY: clientY
+            };
+        }
+
+        // 当たり判定 (一番上の図形から探す)
+        function hitTest(pos) {
+            for (let i = shapes.length - 1; i >= 0; i--) {
+                const s = shapes[i];
+                let minX, maxX, minY, maxY;
+                
+                if (s.type === 'text') {
+                    ctx.font = `bold ${s.stampSize || 50}px sans-serif`;
+                    const metrics = ctx.measureText(s.text);
+                    minX = s.startX;
+                    maxX = s.startX + metrics.width;
+                    minY = s.startY - (s.stampSize / 2);
+                    maxY = s.startY + (s.stampSize / 2);
+                } else {
+                    minX = Math.min(s.startX, s.endX);
+                    maxX = Math.max(s.startX, s.endX);
+                    minY = Math.min(s.startY, s.endY);
+                    maxY = Math.max(s.startY, s.endY);
+                    if (maxX - minX < 20) { minX -= 10; maxX += 10; }
+                    if (maxY - minY < 20) { minY -= 10; maxY += 10; }
+                }
+                
+                const pad = 15;
+                if (pos.x >= minX - pad && pos.x <= maxX + pad && pos.y >= minY - pad && pos.y <= maxY + pad) {
+                    return s;
+                }
+            }
+            return null;
+        }
+
+        function handlePointerDown(e) {
+            if (!baseImage || e.target.id === 'text-input') return;
+            e.preventDefault();
+            const pos = getCanvasCoordinates(e);
+
+            if (currentTool === 'select') {
+                const target = hitTest(pos);
+                if (target) {
+                    draggingShape = target;
+                    lastMousePos = pos;
+                    canvas.style.cursor = 'grabbing';
+                    showStatus(`${target.type} を移動中`);
+                }
+                return;
+            }
+
+            if (currentTool === 'text') {
+                showTextInput(pos);
+                return;
+            }
+
+            hideTextInput();
+            isDrawing = true;
+            startPos = pos;
+            
+            currentShape = {
+                type: currentTool,
+                startX: pos.x,
+                startY: pos.y,
+                endX: pos.x,
+                endY: pos.y,
+                color: toolColors[currentTool] || '#000',
+                lineWidth: parseInt(lineWidthInput.value, 10),
+                stampSize: parseInt(stampSizeInput.value, 10)
+            };
+        }
+
+        function handlePointerMove(e) {
+            if (!baseImage) return;
+            const pos = getCanvasCoordinates(e);
+            
+            // ステータス表示の更新
+            if (isDrawing && currentShape) {
+                const w = Math.abs(pos.x - currentShape.startX);
+                const h = Math.abs(pos.y - currentShape.startY);
+                statusDynamic.textContent = `描画中 (幅:${Math.round(w)} 高:${Math.round(h)})`;
+            } else if (draggingShape) {
+                statusDynamic.textContent = `移動中 (X:${Math.round(pos.x)} Y:${Math.round(pos.y)})`;
+            } else {
+                statusDynamic.textContent = `座標 (X:${Math.round(pos.x)} Y:${Math.round(pos.y)})`;
+                if (currentTool === 'select') {
+                    canvas.style.cursor = hitTest(pos) ? 'grab' : 'default';
+                }
+            }
+
+            if (isDrawing && currentShape) {
+                e.preventDefault();
+                currentShape.endX = pos.x;
+                currentShape.endY = pos.y;
+                
+                // 縦横比の固定
+                if ((isAspectLocked || e.shiftKey) && currentTool !== 'arrow' && currentTool !== 'text') {
+                    const dx = currentShape.endX - currentShape.startX;
+                    const dy = currentShape.endY - currentShape.startY;
+                    const size = Math.max(Math.abs(dx), Math.abs(dy));
+                    currentShape.endX = currentShape.startX + (dx >= 0 ? size : -size);
+                    currentShape.endY = currentShape.startY + (dy >= 0 ? size : -size);
+                }
+                render();
+            } else if (draggingShape) {
+                e.preventDefault();
+                const dx = pos.x - lastMousePos.x;
+                const dy = pos.y - lastMousePos.y;
+                draggingShape.startX += dx;
+                draggingShape.startY += dy;
+                if (draggingShape.endX !== undefined) {
+                    draggingShape.endX += dx;
+                    draggingShape.endY += dy;
+                }
+                lastMousePos = pos;
+                render();
+            }
+        }
+
+        function handlePointerUp(e) {
+            if (isDrawing && currentShape) {
+                isDrawing = false;
+                // クリック（短距離）の場合はスタンプとして配置
+                const dx = currentShape.endX - currentShape.startX;
+                const dy = currentShape.endY - currentShape.startY;
+                if (Math.sqrt(dx * dx + dy * dy) < 5 && currentTool !== 'text' && currentTool !== 'mosaic') {
+                    const halfSize = currentShape.stampSize / 2;
+                    currentShape.startX = startPos.x - halfSize;
+                    currentShape.startY = startPos.y - halfSize;
+                    currentShape.endX = startPos.x + halfSize;
+                    currentShape.endY = startPos.y + halfSize;
+                }
+                shapes.push(currentShape);
+                currentShape = null;
+                saveState();
+                showStatus('描画しました');
+            }
+            
+            if (draggingShape) {
+                draggingShape = null;
+                if(currentTool === 'select') canvas.style.cursor = 'grab';
+                saveState();
+                showStatus('移動を完了しました');
+            }
+        }
+
+        canvas.addEventListener('mousedown', handlePointerDown);
+        canvas.addEventListener('mousemove', handlePointerMove);
+        window.addEventListener('mouseup', handlePointerUp);
+        canvas.addEventListener('touchstart', handlePointerDown, {passive: false});
+        canvas.addEventListener('touchmove', handlePointerMove, {passive: false});
+        window.addEventListener('touchend', handlePointerUp);
+
+        function saveState() {
+            // 現在のステップより先（Redo分）があれば削除
+            if (historyStep < history.length - 1) {
+                history = history.slice(0, historyStep + 1);
+            }
+            // オブジェクトのディープコピーを作成して保存
+            history.push(JSON.parse(JSON.stringify(shapes)));
+            historyStep++;
+            updateUndoRedoButtons();
+            render();
+        }
+
+        function undo() {
+            if (historyStep > 0) {
+                hideTextInput();
+                historyStep--;
+                shapes = JSON.parse(JSON.stringify(history[historyStep]));
+                updateUndoRedoButtons();
+                render();
+                showStatus('元に戻しました');
+            }
+        }
+
+        function redo() {
+            if (historyStep < history.length - 1) {
+                hideTextInput();
+                historyStep++;
+                shapes = JSON.parse(JSON.stringify(history[historyStep]));
+                updateUndoRedoButtons();
+                render();
+                showStatus('やり直しました');
+            }
+        }
+
+        function updateUndoRedoButtons() {
+            btnUndo.disabled = historyStep <= 0;
+            btnRedo.disabled = historyStep >= history.length - 1;
+        }
+
+        function clearShapes() {
+            if (shapes.length === 0) return;
+            hideTextInput();
+            if(confirm("すべての描画を消去しますか？")) {
+                shapes = [];
+                saveState();
+                showStatus('すべて消去しました');
+            }
+        }
+
+        let textInsertPos = null;
+        function showTextInput(pos) {
+            if (textInputContainer.style.display === 'block') commitText();
+            textInsertPos = pos;
+            textInputContainer.style.left = `${pos.screenX}px`;
+            textInputContainer.style.top = `${pos.screenY}px`;
+            textInputContainer.style.display = 'block';
+            textInput.style.color = toolColors['text'];
+            const scale = canvas.getBoundingClientRect().width / canvas.width;
+            textInput.style.fontSize = `${parseInt(stampSizeInput.value) * scale}px`;
+            textInput.value = '';
+            setTimeout(() => textInput.focus(), 10);
+        }
+        function hideTextInput() {
+            textInputContainer.style.display = 'none';
+            textInput.value = '';
+            textInsertPos = null;
+        }
+        function commitText() {
+            const text = textInput.value.trim();
+            if (text && textInsertPos) {
+                shapes.push({
+                    type: 'text',
+                    text: text,
+                    startX: textInsertPos.x,
+                    startY: textInsertPos.y,
+                    color: toolColors['text'],
+                    stampSize: parseInt(stampSizeInput.value, 10)
+                });
+                saveState();
+                showStatus('テキストを配置しました');
+            }
+            hideTextInput();
+        }
+        textInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commitText(); } 
+            else if (e.key === 'Escape') hideTextInput();
+        });
+        document.addEventListener('mousedown', (e) => {
+            if (textInputContainer.style.display === 'block' && e.target !== textInput && e.target !== canvas) commitText();
+        });
+
+        function render() {
+            if (!baseImage) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(baseImage, 0, 0);
+
+            for (const shape of shapes) drawShape(ctx, shape);
+            if (isDrawing && currentShape) drawShape(ctx, currentShape);
+        }
+
+        function drawShape(ctx, shape) {
+            ctx.strokeStyle = shape.color;
+            ctx.fillStyle = shape.color;
+            ctx.lineWidth = shape.lineWidth || parseInt(lineWidthInput.value);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            ctx.beginPath();
+
+            if (shape.type === 'circle') {
+                const cx = (shape.startX + shape.endX) / 2;
+                const cy = (shape.startY + shape.endY) / 2;
+                const rx = Math.abs(shape.startX - shape.endX) / 2;
+                const ry = Math.abs(shape.startY - shape.endY) / 2;
+                ctx.ellipse(cx, cy, rx, ry, 0, 0, 2 * Math.PI);
+                ctx.stroke();
+            } else if (shape.type === 'cross') {
+                ctx.moveTo(shape.startX, shape.startY);
+                ctx.lineTo(shape.endX, shape.endY);
+                ctx.moveTo(shape.endX, shape.startY);
+                ctx.lineTo(shape.startX, shape.endY);
+                ctx.stroke();
+            } else if (shape.type === 'square') {
+                const w = shape.endX - shape.startX;
+                const h = shape.endY - shape.startY;
+                ctx.rect(shape.startX, shape.startY, w, h);
+                ctx.stroke();
+            } else if (shape.type === 'arrow') {
+                const headlen = 10 + (ctx.lineWidth);
+                const dx = shape.endX - shape.startX;
+                const dy = shape.endY - shape.startY;
+                const angle = Math.atan2(dy, dx);
+                ctx.moveTo(shape.startX, shape.startY);
+                ctx.lineTo(shape.endX, shape.endY);
+                ctx.lineTo(shape.endX - headlen * Math.cos(angle - Math.PI / 6), shape.endY - headlen * Math.sin(angle - Math.PI / 6));
+                ctx.moveTo(shape.endX, shape.endY);
+                ctx.lineTo(shape.endX - headlen * Math.cos(angle + Math.PI / 6), shape.endY - headlen * Math.sin(angle + Math.PI / 6));
+                ctx.stroke();
+            } else if (shape.type === 'text') {
+                ctx.font = `bold ${shape.stampSize || 50}px sans-serif`;
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = "rgba(255,255,255,0.8)";
+                ctx.shadowBlur = 6;
+                ctx.fillText(shape.text, shape.startX, shape.startY);
+                ctx.shadowBlur = 0;
+            } else if (shape.type === 'mosaic' && pixelatedCanvas) {
+                const x = Math.min(shape.startX, shape.endX);
+                const y = Math.min(shape.startY, shape.endY);
+                const w = Math.abs(shape.startX - shape.endX);
+                const h = Math.abs(shape.startY - shape.endY);
+                if (w > 0 && h > 0) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(x, y, w, h);
+                    ctx.clip(); // 描画領域を四角形に限定
+                    ctx.drawImage(pixelatedCanvas, 0, 0); // キャッシュしたモザイク画像を描画
+                    ctx.restore();
+                }
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (document.activeElement === textInput) return;
+            if (e.ctrlKey || e.metaKey) {
+                if (e.key === 'z') { e.preventDefault(); undo(); }
+                else if (e.key === 'y') { e.preventDefault(); redo(); }
+            } else {
+                switch(e.key.toLowerCase()) {
+                    case 'v': setTool('select'); break;
+                    case 'o': setTool('circle'); break;
+                    case 'x': setTool('cross'); break;
+                    case 's': setTool('square'); break;
+                    case 'a': setTool('arrow'); break;
+                    case 't': setTool('text'); break;
+                    case 'm': setTool('mosaic'); break;
+                }
+            }
+        });
+
+        function downloadImage() {
+            if (!baseImage) return;
+            hideTextInput();
+            const link = document.createElement('a');
+            link.download = 'annotated_image_' + new Date().getTime() + '.png';
+            link.href = canvas.toDataURL('image/png');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showStatus('画像を保存しました');
+        }
+
+        setTool('circle');
+    </script>
+</body>
+</html>
